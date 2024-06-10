@@ -23,7 +23,7 @@ use libax::{
 use libax::{
     hv::{
         self, GuestPageTable, GuestPageTableTrait, HyperCallMsg, HyperCraftHalImpl, PerCpu, Result,
-        VCpu, VmCpus, VmExitInfo, VM, phys_to_virt,
+        VCpu, VmCpus, VmExitInfo, VM, phys_to_virt, VmCpuStatus
     },
     info,
 };
@@ -40,31 +40,71 @@ mod aarch64_config;
 #[cfg(target_arch = "x86_64")]
 mod x64;
 
+
+// ADDED
+use core::{sync::atomic::{AtomicUsize, Ordering}};
+
+use lazy_init::LazyInit;
+static mut HV_VM: LazyInit<VM<HyperCraftHalImpl, GuestPageTable>> = LazyInit::new();
+
+static SYNC_VCPUS: AtomicUsize = AtomicUsize::new(0);
+
+// TODO
+// static SMP: usize = 2;
+static SMP: usize = axconfig::SMP;
+
+
 #[no_mangle]
 fn main(hart_id: usize) {
     println!("Hello, hv!");
+    
+    // TODO
+    assert!(hart_id != 0);
 
     #[cfg(target_arch = "riscv64")]
     {
         // boot cpu
-        PerCpu::<HyperCraftHalImpl>::init(0, 0x4000);
+        // PerCpu::<HyperCraftHalImpl>::init(0, 0x4000).unwrap();
+        PerCpu::<HyperCraftHalImpl>::init(hart_id, 0x4000).unwrap();
+        
 
         // get current percpu
         let pcpu = PerCpu::<HyperCraftHalImpl>::this_cpu();
 
         // create vcpu
         let gpt = setup_gpm(0x9000_0000).unwrap();
-        let vcpu = pcpu.create_vcpu(0, 0x9020_0000).unwrap();
+        // let mut vcpu = pcpu.create_vcpu(0, 0x9020_0000).unwrap();
+        let mut vcpu = pcpu.create_vcpu(hart_id, 0x9020_0000).unwrap();
+        vcpu.set_status(VmCpuStatus::Runnable);
+        assert!(matches!(vcpu.get_status(), VmCpuStatus::Runnable));
+
         let mut vcpus = VmCpus::new();
 
         // add vcpu into vm
         vcpus.add_vcpu(vcpu).unwrap();
-        let mut vm: VM<HyperCraftHalImpl, GuestPageTable> = VM::new(vcpus, gpt).unwrap();
-        vm.init_vcpu(0);
 
+        // let mut vm: VM<HyperCraftHalImpl, GuestPageTable> = VM::new(vcpus, gpt).unwrap();
+
+        unsafe {
+            HV_VM.init_by(VM::new(vcpus, gpt).unwrap());
+        }
+        let vm = unsafe { HV_VM.get_mut_unchecked() };
+
+        // 等待同步
+        info!("VCPU{} main hart ok and wait for sync", hart_id);
+
+        SYNC_VCPUS.fetch_add(1, Ordering::Relaxed);
+        while !(SYNC_VCPUS.load(Ordering::Acquire) == SMP) {
+            core::hint::spin_loop();
+        }
+
+        info!("VCPU{} main hart sync done!!!", hart_id);
+
+        vm.init_vcpu(0);
         // vm run
         info!("vm run cpu{}", hart_id);
-        vm.run(0);
+        // vm.run(0);
+        vm.run(hart_id);
     }
     #[cfg(target_arch = "aarch64")]
     {
@@ -289,4 +329,48 @@ pub fn setup_gpm(dtb: usize, kernel_entry: usize) -> Result<GuestPageTable> {
     let paddr = gpt.translate(gaddr).unwrap();
     debug!("this is paddr for 0x{:X}: 0x{:X}", gaddr, paddr);
     Ok(gpt)
+}
+
+
+#[no_mangle]
+pub extern "C" fn hv_secondary_main(hart_id: usize) {
+    debug!("HART{} entering hv_secondary_main", hart_id);
+
+    while let None = unsafe { HV_VM.try_get() } {
+        core::hint::spin_loop();
+    }
+    // boot cpu
+    // PerCpu::<HyperCraftHalImpl>::init(hart_id, 0x4000);
+    PerCpu::<HyperCraftHalImpl>::setup_this_cpu(hart_id).unwrap();
+
+    // get current percpu
+    let pcpu = PerCpu::<HyperCraftHalImpl>::this_cpu();
+
+    // create vcpu
+    // let gpt = setup_gpm(0x9000_0000).unwrap();
+    let vcpu = pcpu.create_vcpu(hart_id, 0).unwrap();
+    assert!(matches!(vcpu.get_status(), VmCpuStatus::PoweredOff));
+    info!("HART{} bounding VCPU{}", hart_id, vcpu.vcpu_id());
+
+    let vm = unsafe { HV_VM.get_mut_unchecked() };
+
+    vm.add_vcpu(vcpu).unwrap();
+
+    // debug!(
+    //     "add vcpu ok vcpu_id={:?} vcpu_num = {:?}",
+    //     hart_id, INITED_VCPUS
+    // );
+    
+    // 等待同步
+    info!("VCPU{} init ok and wait for sync", hart_id);
+
+    SYNC_VCPUS.fetch_add(1, Ordering::Relaxed);
+    while !(SYNC_VCPUS.load(Ordering::Acquire) == SMP) {
+        core::hint::spin_loop();
+    }
+
+    info!("VCPU{} sync done!!!", hart_id);
+
+    vm.init_vcpu(hart_id);
+    vm.run(hart_id);
 }

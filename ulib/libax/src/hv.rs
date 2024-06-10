@@ -10,4 +10,5 @@ pub use hypercraft::HyperResult as Result;
 pub use hypercraft::HyperCraftHal;
 pub use hypercraft::{PerCpu, VCpu, VmCpus, VM};
 #[cfg(not(target_arch = "aarch64"))]
-pub use hypercraft::{HyperCallMsg, VmExitInfo, GuestPhysAddr, GuestVirtAddr, HostPhysAddr, HostVirtAddr};
+// ADDED
+pub use hypercraft::{HyperCallMsg, VmExitInfo, GuestPhysAddr, GuestVirtAddr, HostPhysAddr, HostVirtAddr, VmCpuStatus};
