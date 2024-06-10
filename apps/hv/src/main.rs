@@ -59,7 +59,7 @@ fn main(hart_id: usize) {
     println!("Hello, hv!");
     
     // TODO
-    assert!(hart_id != 0);
+    assert!(hart_id == 0);
 
     #[cfg(target_arch = "riscv64")]
     {
