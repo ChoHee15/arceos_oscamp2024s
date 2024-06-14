@@ -80,7 +80,6 @@ fn main(hart_id: usize) {
 
         let mut vcpus = VmCpus::new();
 
-        // add vcpu into vm
         vcpus.add_vcpu(vcpu).unwrap();
 
         // let mut vm: VM<HyperCraftHalImpl, GuestPageTable> = VM::new(vcpus, gpt).unwrap();
@@ -100,7 +99,8 @@ fn main(hart_id: usize) {
 
         info!("VCPU{} main hart sync done!!!", hart_id);
 
-        vm.init_vcpu(0);
+        // vm.sync_vcpu(hart_id);
+        vm.init_vcpu(hart_id);
         // vm run
         info!("vm run cpu{}", hart_id);
         // vm.run(0);
@@ -177,10 +177,13 @@ pub fn setup_gpm(dtb: usize) -> Result<GuestPageTable> {
     }
 
     if let Some(uart) = meta.uart {
+        error!("UART SIZE: {:#x}", uart.size);
         gpt.map_region(
             uart.base_address,
             uart.base_address,
             0x1000,
+            // TODO NotAligned?
+            // uart.size = 0x100,
             MappingFlags::READ | MappingFlags::WRITE | MappingFlags::USER,
         )?;
     }
@@ -195,10 +198,15 @@ pub fn setup_gpm(dtb: usize) -> Result<GuestPageTable> {
     }
 
     if let Some(plic) = meta.plic {
+        error!("PLIC SIZE: {:#x}", plic.size);
         gpt.map_region(
             plic.base_address,
             plic.base_address,
+            // TODO ang?为什么dtb里是600000?
             0x20_0000,
+            // 0x60_0000,
+            // 0x40_0000,
+            // plic.size, 
             MappingFlags::READ | MappingFlags::WRITE | MappingFlags::USER,
         )?;
     }
@@ -339,38 +347,30 @@ pub extern "C" fn hv_secondary_main(hart_id: usize) {
     while let None = unsafe { HV_VM.try_get() } {
         core::hint::spin_loop();
     }
-    // boot cpu
-    // PerCpu::<HyperCraftHalImpl>::init(hart_id, 0x4000);
-    PerCpu::<HyperCraftHalImpl>::setup_this_cpu(hart_id).unwrap();
 
-    // get current percpu
+    PerCpu::<HyperCraftHalImpl>::setup_this_cpu(hart_id).unwrap();
     let pcpu = PerCpu::<HyperCraftHalImpl>::this_cpu();
 
-    // create vcpu
-    // let gpt = setup_gpm(0x9000_0000).unwrap();
     let vcpu = pcpu.create_vcpu(hart_id, 0).unwrap();
+
     assert!(matches!(vcpu.get_status(), VmCpuStatus::PoweredOff));
     info!("HART{} bounding VCPU{}", hart_id, vcpu.vcpu_id());
 
     let vm = unsafe { HV_VM.get_mut_unchecked() };
 
     vm.add_vcpu(vcpu).unwrap();
-
-    // debug!(
-    //     "add vcpu ok vcpu_id={:?} vcpu_num = {:?}",
-    //     hart_id, INITED_VCPUS
-    // );
     
-    // 等待同步
+    
     info!("VCPU{} init ok and wait for sync", hart_id);
 
     SYNC_VCPUS.fetch_add(1, Ordering::Relaxed);
-    while !(SYNC_VCPUS.load(Ordering::Acquire) == SMP) {
-        core::hint::spin_loop();
-    }
+    // while !(SYNC_VCPUS.load(Ordering::Acquire) == SMP) {
+    //     core::hint::spin_loop();
+    // }
 
-    info!("VCPU{} sync done!!!", hart_id);
+    // info!("VCPU{} sync done!!!", hart_id);
 
+    // vm.sync_vcpu(hart_id);
     vm.init_vcpu(hart_id);
     vm.run(hart_id);
 }
