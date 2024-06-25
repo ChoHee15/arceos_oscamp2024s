@@ -25,6 +25,7 @@ fn dump_instructions_at(base: usize, from: isize, to: isize) {
 
 #[no_mangle]
 fn riscv_trap_handler(tf: &mut TrapFrame, _from_user: bool) {
+    error!("ARCEOS IRQ!!!!");
     let scause = scause::read();
     match scause.cause() {
         Trap::Exception(E::Breakpoint) => handle_breakpoint(&mut tf.sepc),

@@ -50,8 +50,8 @@ static mut HV_VM: LazyInit<VM<HyperCraftHalImpl, GuestPageTable>> = LazyInit::ne
 static SYNC_VCPUS: AtomicUsize = AtomicUsize::new(0);
 
 // TODO
-// static SMP: usize = 2;
-static SMP: usize = axconfig::SMP;
+static SMP: usize = 2;
+// static SMP: usize = axconfig::SMP;
 
 
 #[no_mangle]
@@ -78,9 +78,15 @@ fn main(hart_id: usize) {
         vcpu.set_status(VmCpuStatus::Runnable);
         assert!(matches!(vcpu.get_status(), VmCpuStatus::Runnable));
 
+        // multi-bounding
+        let vcpu2 = pcpu.create_vcpu(hart_id + 1, 0x0).unwrap();
+        assert!(matches!(vcpu2.get_status(), VmCpuStatus::PoweredOff));
+
         let mut vcpus = VmCpus::new();
 
         vcpus.add_vcpu(vcpu).unwrap();
+        // multi-bounding
+        vcpus.add_vcpu(vcpu2).unwrap();
 
         // let mut vm: VM<HyperCraftHalImpl, GuestPageTable> = VM::new(vcpus, gpt).unwrap();
 
@@ -93,11 +99,20 @@ fn main(hart_id: usize) {
         info!("VCPU{} main hart ok and wait for sync", hart_id);
 
         SYNC_VCPUS.fetch_add(1, Ordering::Relaxed);
+        SYNC_VCPUS.fetch_add(1, Ordering::Relaxed);
         while !(SYNC_VCPUS.load(Ordering::Acquire) == SMP) {
             core::hint::spin_loop();
         }
 
         info!("VCPU{} main hart sync done!!!", hart_id);
+
+        let pcpu = PerCpu::<HyperCraftHalImpl>::this_cpu();
+        loop {
+            let next_vcpu_id = pcpu.next_vcpu();
+            info!("HART{} run its vcpu{}", hart_id, next_vcpu_id);
+            vm.init_vcpu(next_vcpu_id);
+            vm.run(next_vcpu_id);
+        }
 
         // vm.sync_vcpu(hart_id);
         vm.init_vcpu(hart_id);
@@ -353,22 +368,39 @@ pub extern "C" fn hv_secondary_main(hart_id: usize) {
 
     let vcpu = pcpu.create_vcpu(hart_id, 0).unwrap();
 
+    // ADDED
+    let vcpu2 = pcpu.create_vcpu(hart_id + 1, 0).unwrap();
+    // let vcpu3 = pcpu.create_vcpu(hart_id + 2, 0).unwrap();
+
     assert!(matches!(vcpu.get_status(), VmCpuStatus::PoweredOff));
     info!("HART{} bounding VCPU{}", hart_id, vcpu.vcpu_id());
 
     let vm = unsafe { HV_VM.get_mut_unchecked() };
 
     vm.add_vcpu(vcpu).unwrap();
+    // ADDED
+    vm.add_vcpu(vcpu2).unwrap();
+    // vm.add_vcpu(vcpu3).unwrap();
     
     
     info!("VCPU{} init ok and wait for sync", hart_id);
 
-    SYNC_VCPUS.fetch_add(1, Ordering::Relaxed);
+    SYNC_VCPUS.fetch_add(2, Ordering::Relaxed);
+    // SYNC_VCPUS.fetch_add(1, Ordering::Relaxed);
+    // SYNC_VCPUS.fetch_add(1, Ordering::Relaxed);
     // while !(SYNC_VCPUS.load(Ordering::Acquire) == SMP) {
     //     core::hint::spin_loop();
     // }
 
     // info!("VCPU{} sync done!!!", hart_id);
+
+    let pcpu = PerCpu::<HyperCraftHalImpl>::this_cpu();
+    loop {
+        let next_vcpu_id = pcpu.next_vcpu();
+        // info!("HART{} run its vcpu{}", hart_id, next_vcpu_id);
+        vm.init_vcpu(next_vcpu_id);
+        vm.run(next_vcpu_id);
+    }
 
     // vm.sync_vcpu(hart_id);
     vm.init_vcpu(hart_id);
