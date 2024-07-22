@@ -26,6 +26,7 @@ fn dump_instructions_at(base: usize, from: isize, to: isize) {
 #[no_mangle]
 fn riscv_trap_handler(tf: &mut TrapFrame, _from_user: bool) {
     let scause = scause::read();
+    info!("riscv_trap_handler! {:#x?}", scause.cause());
     match scause.cause() {
         Trap::Exception(E::Breakpoint) => handle_breakpoint(&mut tf.sepc),
         Trap::Interrupt(_) => crate::trap::handle_irq_extern(scause.bits()),

@@ -295,6 +295,8 @@ fn init_interrupt() {
         }
         unsafe { NEXT_DEADLINE.write_current_raw(deadline + PERIODIC_INTERVAL_NANOS) };
         axhal::time::set_oneshot_timer(deadline);
+        hypercraft::update_os_timer(deadline);
+        debug!("OS timer set to {}", deadline);
     }
 
     axhal::irq::register_handler(TIMER_IRQ_NUM, || {
